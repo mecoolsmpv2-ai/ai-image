@@ -7,6 +7,12 @@ from typing import Any
 from comfyui_app.config import WORKFLOWS_DIR
 
 
+TORCH_COMPILE_NODE_CLASS = "TorchCompileModel"
+# Verified from nunchaku-ai/ComfyUI-nunchaku nodes/models/flux.py:
+# class_type / mapping key is "NunchakuFluxDiTLoader".
+NUNCHAKU_DIT_LOADER_CLASS = "NunchakuFluxDiTLoader"
+
+
 def _node(class_type: str, **inputs: Any) -> dict[str, Any]:
     return {"class_type": class_type, "inputs": inputs}
 
@@ -19,6 +25,20 @@ def _loader_node(diffusion_model: str) -> dict[str, Any]:
     if diffusion_model.lower().endswith(".gguf"):
         return _node("UnetLoaderGGUF", unet_name=diffusion_model)
     return _node("UNETLoader", unet_name=diffusion_model, weight_dtype="default")
+
+
+def _diffusion_loader_node(diffusion_model: str, engine: str) -> dict[str, Any]:
+    if engine == "nunchaku_int4":
+        return _node(
+            NUNCHAKU_DIT_LOADER_CLASS,
+            model_path=diffusion_model,
+            cache_threshold=0.12,
+            attention="nunchaku-fp16",
+            cpu_offload="auto",
+            device_id=0,
+            data_type="float16",
+        )
+    return _loader_node(diffusion_model)
 
 
 def _decode_node(use_tiled_decode: bool, decode_tile_size: int) -> tuple[str, dict[str, Any]]:
@@ -42,9 +62,12 @@ def build_edit_prompt(
     batch_size: int,
     use_tiled_decode: bool,
     decode_tile_size: int,
+    engine: str = "default",
+    use_torch_compile: bool = False,
 ) -> dict[str, Any]:
+    model_link = _link("1")
     nodes: dict[str, Any] = {
-        "1": _loader_node(diffusion_model),
+        "1": _diffusion_loader_node(diffusion_model, engine),
         "2": _node("CLIPLoader", clip_name=text_encoder_model, type="flux2", device="default"),
         "3": _node("VAELoader", vae_name=vae_model),
         "4": _node("CLIPTextEncode", clip=_link("2"), text=prompt),
@@ -64,7 +87,7 @@ def build_edit_prompt(
         "13": _node("Flux2Scheduler", steps=steps, width=_link("8", 0), height=_link("8", 1)),
         "14": _node("KSamplerSelect", sampler_name="euler"),
         "15": _node("RandomNoise", noise_seed=seed),
-        "16": _node("CFGGuider", model=_link("1"), positive=_link("10"), negative=_link("11"), cfg=cfg),
+        "16": _node("CFGGuider", model=model_link, positive=_link("10"), negative=_link("11"), cfg=cfg),
         "17": _node(
             "SamplerCustomAdvanced",
             noise=_link("15"),
@@ -77,6 +100,10 @@ def build_edit_prompt(
     decode_id, decode_node = _decode_node(use_tiled_decode, decode_tile_size)
     nodes[decode_id] = decode_node
     nodes["19"] = _node("SaveImage", images=_link(decode_id), filename_prefix="Flux2-Klein")
+    if use_torch_compile:
+        compile_id = str(max(int(node_id) for node_id in nodes.keys() if node_id.isdigit()) + 1)
+        nodes[compile_id] = _node(TORCH_COMPILE_NODE_CLASS, model=_link("1"), backend="inductor")
+        nodes["16"]["inputs"]["model"] = _link(compile_id)
     return nodes
 
 
@@ -95,9 +122,12 @@ def build_t2i_prompt(
     batch_size: int,
     use_tiled_decode: bool,
     decode_tile_size: int,
+    engine: str = "default",
+    use_torch_compile: bool = False,
 ) -> dict[str, Any]:
+    model_link = _link("1")
     nodes: dict[str, Any] = {
-        "1": _loader_node(diffusion_model),
+        "1": _diffusion_loader_node(diffusion_model, engine),
         "2": _node("CLIPLoader", clip_name=text_encoder_model, type="flux2", device="default"),
         "3": _node("VAELoader", vae_name=vae_model),
         "4": _node("CLIPTextEncode", clip=_link("2"), text=prompt),
@@ -106,7 +136,7 @@ def build_t2i_prompt(
         "7": _node("Flux2Scheduler", steps=steps, width=width, height=height),
         "8": _node("KSamplerSelect", sampler_name="euler"),
         "9": _node("RandomNoise", noise_seed=seed),
-        "10": _node("CFGGuider", model=_link("1"), positive=_link("4"), negative=_link("5"), cfg=cfg),
+        "10": _node("CFGGuider", model=model_link, positive=_link("4"), negative=_link("5"), cfg=cfg),
         "11": _node(
             "SamplerCustomAdvanced",
             noise=_link("9"),
@@ -119,6 +149,10 @@ def build_t2i_prompt(
     decode_id, decode_node = _decode_node(use_tiled_decode, decode_tile_size)
     nodes[decode_id] = decode_node
     nodes["12"] = _node("SaveImage", images=_link(decode_id), filename_prefix="Flux2-Klein")
+    if use_torch_compile:
+        compile_id = str(max(int(node_id) for node_id in nodes.keys() if node_id.isdigit()) + 1)
+        nodes[compile_id] = _node(TORCH_COMPILE_NODE_CLASS, model=_link("1"), backend="inductor")
+        nodes["10"]["inputs"]["model"] = _link(compile_id)
     return nodes
 
 

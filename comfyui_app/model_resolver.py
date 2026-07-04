@@ -74,6 +74,15 @@ MODEL_REGISTRY: dict[str, dict[str, list[Candidate]]] = {
                 kind="flux-2-klein-4b-Q2_K.gguf",
             )
         ],
+        "nunchaku_int4": [
+            Candidate(
+                repo="tonera/FLUX.2-klein-4B-Nunchaku",
+                path_regex=r"(^|/)svdq-int4_r32-FLUX\.2-klein-4B-Nunchaku\.safetensors$",
+                dest_subdir="diffusion_models",
+                min_vram=0.0,
+                kind="svdq-int4_r32-FLUX.2-klein-4B-Nunchaku.safetensors",
+            )
+        ],
     },
     "text_encoder": {
         "flux2_fp4": [
@@ -195,14 +204,19 @@ def _select_candidate_for_key(component: str, key: str, token: str | None) -> di
     raise ModelResolverError(f"Could not resolve a file for {component}:{key}.")
 
 
-def resolve_models(vram_gb: float, token: str | None, prefer_gguf: bool = False) -> dict[str, dict[str, object]]:
+def resolve_models(
+    vram_gb: float,
+    token: str | None,
+    prefer_gguf: bool = False,
+    engine: str = "default",
+) -> dict[str, dict[str, object]]:
     if not token:
         raise ModelResolverError(
             "A Hugging Face token is required to download the ComfyUI models. Run setup and paste your token first."
         )
 
     tier = select_tier(vram_gb)
-    diffusion_key = tier.diffusion
+    diffusion_key = "nunchaku_int4" if engine == "nunchaku_int4" else tier.diffusion
     if prefer_gguf and diffusion_key == "flux2_fp8":
         diffusion_key = "flux2_gguf_q4_k_m"
     text_encoder_key = tier.text_encoder
@@ -244,11 +258,14 @@ def download_models(
     resolved: Mapping[str, Mapping[str, object]],
     token: str | None,
     progress_cb: Callable[[str], None] | None = None,
+    *,
+    engine: str = "default",
 ) -> dict[str, dict[str, object]]:
     if hf_hub_download is None:
         raise ModelResolverError("huggingface_hub is not installed, so model downloads cannot continue.")
 
     manifest = {
+        "engine": engine,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "models": {},
     }

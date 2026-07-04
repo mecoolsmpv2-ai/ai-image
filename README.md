@@ -37,6 +37,7 @@ contains the normal encoder plus the faster decoder.
 - `black-forest-labs/FLUX.2-small-decoder`
 - `Comfy-Org/flux2-klein-4B`
 - `unsloth/FLUX.2-klein-4B-GGUF`
+- `tonera/FLUX.2-klein-4B-Nunchaku`
 
 ### Sources
 
@@ -44,6 +45,20 @@ contains the normal encoder plus the faster decoder.
 - https://huggingface.co/black-forest-labs/FLUX.2-small-decoder
 - https://huggingface.co/Comfy-Org/flux2-klein-4B
 - https://huggingface.co/unsloth/FLUX.2-klein-4B-GGUF
+- https://huggingface.co/tonera/FLUX.2-klein-4B-Nunchaku
+
+### Optional speedups
+
+- **SageAttention 2** is preferred and is auto-used when available via
+  `--use-sage-attention`.
+- **Nunchaku INT4** is experimental but can be much faster. It uses the
+  `svdq-int4_r32-FLUX.2-klein-4B-Nunchaku.safetensors` model from
+  `tonera/FLUX.2-klein-4B-Nunchaku` and requires the optional Nunchaku
+  install path. Run `python -m comfyui_app.installer --with-experimental-speedups`
+  to try it, then choose it from the UI engine dropdown.
+- **torch.compile** is available as a checkbox in the UI. It can speed up
+  repeated runs after the first compile, but the first run is slower and
+  resolution changes trigger recompilation.
 top of ComfyUI's HTTP API behind a simple, non-technical Gradio front end — no
 node graph required.
 

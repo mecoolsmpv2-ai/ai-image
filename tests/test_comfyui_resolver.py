@@ -90,6 +90,29 @@ def test_build_edit_prompt_switches_loader_for_gguf() -> None:
     assert safetensors_prompt["1"]["class_type"] == "UNETLoader"
 
 
+def test_build_edit_prompt_uses_nunchaku_loader_for_experimental_engine() -> None:
+    prompt = build_edit_prompt(
+        diffusion_model="svdq-int4_r32-FLUX.2-klein-4B-Nunchaku.safetensors",
+        text_encoder_model="qwen_3_4b_fp4_flux2.safetensors",
+        vae_model="full_encoder_small_decoder.safetensors",
+        prompt="make this photo realistic",
+        negative="blurry, cartoon",
+        seed=123,
+        steps=4,
+        cfg=1.0,
+        megapixels=1.0,
+        input_image_name="input.png",
+        batch_size=1,
+        use_tiled_decode=True,
+        decode_tile_size=1024,
+        engine="nunchaku_int4",
+    )
+
+    assert prompt["1"]["class_type"] == "NunchakuFluxDiTLoader"
+    assert prompt["1"]["inputs"]["model_path"] == "svdq-int4_r32-FLUX.2-klein-4B-Nunchaku.safetensors"
+    assert prompt["16"]["inputs"]["model"] == ["1", 0]
+
+
 def test_build_t2i_prompt_omits_image_encoding_nodes() -> None:
     prompt = build_t2i_prompt(
         diffusion_model="flux-2-klein-4b-fp8.safetensors",
@@ -114,11 +137,39 @@ def test_build_t2i_prompt_omits_image_encoding_nodes() -> None:
     assert "SamplerCustomAdvanced" in class_types
 
 
+def test_build_t2i_prompt_adds_torch_compile_node_when_requested() -> None:
+    prompt = build_t2i_prompt(
+        diffusion_model="flux-2-klein-4b-fp8.safetensors",
+        text_encoder_model="qwen_3_4b_fp4_flux2.safetensors",
+        vae_model="full_encoder_small_decoder.safetensors",
+        prompt="a sunny portrait",
+        negative="blurry",
+        seed=0,
+        steps=4,
+        cfg=1.0,
+        width=1024,
+        height=1024,
+        batch_size=1,
+        use_tiled_decode=False,
+        decode_tile_size=1024,
+        use_torch_compile=True,
+    )
+
+    class_types = {node["class_type"] for node in prompt.values()}
+    assert "TorchCompileModel" in class_types
+    compile_node_id = next(node_id for node_id, node in prompt.items() if node["class_type"] == "TorchCompileModel")
+    assert prompt[compile_node_id]["inputs"]["model"] == ["1", 0]
+    assert prompt["10"]["inputs"]["model"] == [compile_node_id, 0]
+
+
 def test_resolver_regex_match_picks_fp8(monkeypatch) -> None:
     trees = {
         "black-forest-labs/FLUX.2-klein-4b-fp8": _tree(
             "flux-2-klein-4b-fp8.safetensors",
             "notes.txt",
+        ),
+        "black-forest-labs/FLUX.2-small-decoder": _tree(
+            "full_encoder_small_decoder.safetensors",
         ),
         "Comfy-Org/flux2-klein-4B": _tree(
             "split_files/text_encoders/qwen_3_4b_fp4_flux2.safetensors",
@@ -134,12 +185,12 @@ def test_resolver_regex_match_picks_fp8(monkeypatch) -> None:
 
     assert Path(str(resolved["diffusion"]["local_filename"])).name == "flux-2-klein-4b-fp8.safetensors"
     assert Path(str(resolved["text_encoder"]["local_filename"])).name == "qwen_3_4b_fp4_flux2.safetensors"
-    assert Path(str(resolved["vae"]["local_filename"])).name == "flux2-vae.safetensors"
+    assert Path(str(resolved["vae"]["local_filename"])).name == "full_encoder_small_decoder.safetensors"
 
 
-def test_resolver_prefers_small_decoder_when_present(monkeypatch) -> None:
+def test_resolver_engine_nunchaku_int4_picks_int4_diffusion(monkeypatch) -> None:
     trees = {
-        "black-forest-labs/FLUX.2-klein-4b-fp8": _tree("flux-2-klein-4b-fp8.safetensors"),
+        "tonera/FLUX.2-klein-4B-Nunchaku": _tree("svdq-int4_r32-FLUX.2-klein-4B-Nunchaku.safetensors"),
         "black-forest-labs/FLUX.2-small-decoder": _tree("full_encoder_small_decoder.safetensors"),
         "Comfy-Org/flux2-klein-4B": _tree(
             "split_files/text_encoders/qwen_3_4b_fp4_flux2.safetensors",
@@ -151,8 +202,9 @@ def test_resolver_prefers_small_decoder_when_present(monkeypatch) -> None:
         return trees.get(repo, [])
 
     monkeypatch.setattr(model_resolver, "_fetch_repo_tree", fake_fetch)
-    resolved = resolve_models(8.0, token="token")
+    resolved = resolve_models(8.0, token="token", engine="nunchaku_int4")
 
+    assert Path(str(resolved["diffusion"]["local_filename"])).name == "svdq-int4_r32-FLUX.2-klein-4B-Nunchaku.safetensors"
     assert Path(str(resolved["vae"]["local_filename"])).name == "full_encoder_small_decoder.safetensors"
 
 

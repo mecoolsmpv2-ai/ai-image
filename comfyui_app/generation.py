@@ -28,8 +28,16 @@ class _ImageLike(Protocol):
         ...
 
 
-def _manifest_models(vram_gb: float, token: str | None, prefer_gguf: bool = False) -> dict[str, dict[str, object]]:
+def _manifest_models(
+    vram_gb: float,
+    token: str | None,
+    prefer_gguf: bool = False,
+    engine: str = "default",
+) -> dict[str, dict[str, object]]:
     manifest = load_resolved_manifest()
+    if isinstance(manifest, dict):
+        if str(manifest.get("engine", "default")) != engine:
+            manifest = None
     if isinstance(manifest, dict):
         models = manifest.get("models")
         if isinstance(models, dict) and {"diffusion", "text_encoder", "vae"} <= set(models):
@@ -42,8 +50,8 @@ def _manifest_models(vram_gb: float, token: str | None, prefer_gguf: bool = Fals
                 cached_paths = [Path(str(item.get("dest_dir", ""))) / str(item.get("local_filename", "")) for item in cached.values()]
                 if all(path.exists() for path in cached_paths):
                     return cached
-    resolved = resolve_models(vram_gb, token, prefer_gguf=prefer_gguf)
-    return download_models(resolved, token)
+    resolved = resolve_models(vram_gb, token, prefer_gguf=prefer_gguf, engine=engine)
+    return download_models(resolved, token, engine=engine)
 
 
 def _output_name(input_image_path: Path | None, prefix: str, seed: int) -> str:
@@ -67,8 +75,8 @@ def _retryable_oom(message: str) -> bool:
     return "out of memory" in lowered or "cuda out of memory" in lowered or "oom" in lowered
 
 
-def _resolved_filename_map(vram_gb: float, prefer_gguf: bool) -> dict[str, str]:
-    resolved = _manifest_models(vram_gb, get_hf_token(), prefer_gguf=prefer_gguf)
+def _resolved_filename_map(vram_gb: float, prefer_gguf: bool, engine: str) -> dict[str, str]:
+    resolved = _manifest_models(vram_gb, get_hf_token(), prefer_gguf=prefer_gguf, engine=engine)
     return {
         "diffusion": str(resolved["diffusion"]["local_filename"]),
         "text_encoder": str(resolved["text_encoder"]["local_filename"]),
@@ -106,6 +114,8 @@ def run_edit(
     use_tiled_decode: bool | None = None,
     timeout: float = 600.0,
     prefer_gguf: bool = False,
+    engine: str = "default",
+    use_torch_compile: bool = False,
     client: ComfyClient | None = None,
 ) -> GenerationResult:
     client = client or ComfyClient(COMFYUI_HOST, COMFYUI_PORT)
@@ -113,7 +123,7 @@ def run_edit(
     target_dir = Path(output_dir)
     vram_gb, _, _ = detect_vram()
     tier = select_tier(vram_gb)
-    filenames = _resolved_filename_map(vram_gb, prefer_gguf)
+    filenames = _resolved_filename_map(vram_gb, prefer_gguf, engine)
     uploaded_name = client.upload_image(input_path)
     prompt_dict = build_edit_prompt(
         diffusion_model=filenames["diffusion"],
@@ -129,14 +139,16 @@ def run_edit(
         batch_size=batch_size,
         use_tiled_decode=tier.use_tiled_decode if use_tiled_decode is None else use_tiled_decode,
         decode_tile_size=decode_tile_size,
+        engine=engine,
+        use_torch_compile=use_torch_compile,
     )
     output_name = _output_name(input_path, "edit", seed)
     try:
         return _run_prompt(client, prompt_dict, target_dir, output_name, timeout)
     except Exception as exc:
-        if not prefer_gguf and _retryable_oom(str(exc)):
+        if engine == "default" and not prefer_gguf and _retryable_oom(str(exc)):
             logger.warning("Switching to GGUF fallback after a memory error.")
-            fallback = _resolved_filename_map(vram_gb, True)
+            fallback = _resolved_filename_map(vram_gb, True, engine)
             prompt_dict = build_edit_prompt(
                 diffusion_model=fallback["diffusion"],
                 text_encoder_model=fallback["text_encoder"],
@@ -151,6 +163,8 @@ def run_edit(
                 batch_size=batch_size,
                 use_tiled_decode=tier.use_tiled_decode if use_tiled_decode is None else use_tiled_decode,
                 decode_tile_size=decode_tile_size,
+                engine=engine,
+                use_torch_compile=use_torch_compile,
             )
             return _run_prompt(client, prompt_dict, target_dir, output_name, timeout)
         raise
@@ -171,13 +185,15 @@ def run_t2i(
     use_tiled_decode: bool | None = None,
     timeout: float = 600.0,
     prefer_gguf: bool = False,
+    engine: str = "default",
+    use_torch_compile: bool = False,
     client: ComfyClient | None = None,
 ) -> GenerationResult:
     client = client or ComfyClient(COMFYUI_HOST, COMFYUI_PORT)
     target_dir = Path(output_dir)
     vram_gb, _, _ = detect_vram()
     tier = select_tier(vram_gb)
-    filenames = _resolved_filename_map(vram_gb, prefer_gguf)
+    filenames = _resolved_filename_map(vram_gb, prefer_gguf, engine)
     prompt_dict = build_t2i_prompt(
         diffusion_model=filenames["diffusion"],
         text_encoder_model=filenames["text_encoder"],
@@ -192,14 +208,16 @@ def run_t2i(
         batch_size=batch_size,
         use_tiled_decode=tier.use_tiled_decode if use_tiled_decode is None else use_tiled_decode,
         decode_tile_size=decode_tile_size,
+        engine=engine,
+        use_torch_compile=use_torch_compile,
     )
     output_name = _output_name(None, "t2i", seed)
     try:
         return _run_prompt(client, prompt_dict, target_dir, output_name, timeout)
     except Exception as exc:
-        if not prefer_gguf and _retryable_oom(str(exc)):
+        if engine == "default" and not prefer_gguf and _retryable_oom(str(exc)):
             logger.warning("Switching to GGUF fallback after a memory error.")
-            fallback = _resolved_filename_map(vram_gb, True)
+            fallback = _resolved_filename_map(vram_gb, True, engine)
             prompt_dict = build_t2i_prompt(
                 diffusion_model=fallback["diffusion"],
                 text_encoder_model=fallback["text_encoder"],
@@ -214,6 +232,8 @@ def run_t2i(
                 batch_size=batch_size,
                 use_tiled_decode=tier.use_tiled_decode if use_tiled_decode is None else use_tiled_decode,
                 decode_tile_size=decode_tile_size,
+                engine=engine,
+                use_torch_compile=use_torch_compile,
             )
             return _run_prompt(client, prompt_dict, target_dir, output_name, timeout)
         raise

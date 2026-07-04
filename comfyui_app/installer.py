@@ -82,6 +82,24 @@ def _install_custom_node(repo_url: str, target_dir: Path) -> None:
         _install_requirements(requirements_file)
 
 
+def _install_experimental_speedups() -> None:
+    print("Experimental speedups are enabled. This step is optional and best effort.")
+    try:
+        custom_nodes = COMFYUI_DIR / "custom_nodes"
+        custom_nodes.mkdir(parents=True, exist_ok=True)
+        _install_custom_node("https://github.com/nunchaku-ai/ComfyUI-nunchaku.git", custom_nodes / "ComfyUI-nunchaku")
+    except Exception as exc:
+        print(f"WARNING: The Nunchaku custom node could not be prepared: {exc}")
+        print("You can still use the default FP8 workflow.")
+
+    try:
+        print("Trying to install the Nunchaku Python package...")
+        _run([sys.executable, "-m", "pip", "install", "--upgrade", "nunchaku"])
+    except Exception as exc:
+        print(f"WARNING: The Nunchaku package install did not finish: {exc}")
+        print("If you want to try the experimental path later, follow the Nunchaku releases page.")
+
+
 def _refresh_models() -> None:
     token = _get_token_from_user()
     vram_gb, device_name, cuda_available = detect_vram()
@@ -99,6 +117,11 @@ def _refresh_models() -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install the ComfyUI stack for the local image app.")
     parser.add_argument("--refresh-models", action="store_true", help="Only refresh the model resolver step.")
+    parser.add_argument(
+        "--with-experimental-speedups",
+        action="store_true",
+        help="Also try the optional Nunchaku experimental speed path.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -109,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
             custom_nodes.mkdir(parents=True, exist_ok=True)
             _install_custom_node("https://github.com/city96/ComfyUI-GGUF.git", custom_nodes / "ComfyUI-GGUF")
             _install_custom_node("https://github.com/ltdrdata/ComfyUI-Manager.git", custom_nodes / "ComfyUI-Manager")
+            if args.with_experimental_speedups:
+                _install_experimental_speedups()
         _refresh_models()
     except ModelResolverError as exc:
         print(exc.message)

@@ -50,10 +50,15 @@ echo Installing ComfyUI helper requirements...
 python -m pip install -r requirements-comfyui.txt
 if errorlevel 1 exit /b 1
 
-echo Trying to add SageAttention for faster attention...
-python -m pip install "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl" --no-deps
+echo Trying to add SageAttention 2 for faster attention...
+python -m pip install --upgrade sageattention
 if errorlevel 1 (
-  echo WARNING: SageAttention could not be installed. ComfyUI will use the default attention path instead.
+  echo SageAttention package install did not work. Trying the Windows wheel next...
+  python -m pip install "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl" --no-deps
+)
+if errorlevel 1 (
+  echo WARNING: SageAttention 2 could not be installed. ComfyUI will use the default attention path.
+  echo You can try again later from the SageAttention releases page.
 )
 
 echo Running the ComfyUI setup tool...

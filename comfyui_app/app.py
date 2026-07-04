@@ -19,6 +19,11 @@ from comfyui_app.video_frames import extract_frames
 
 logger = logging.getLogger(__name__)
 
+ENGINE_CHOICES = [
+    ("fp8 (default)", "default"),
+    ("Nunchaku INT4 (experimental — faster, needs extra install)", "nunchaku_int4"),
+]
+
 
 def _client() -> ComfyClient:
     return ComfyClient(COMFYUI_HOST, COMFYUI_PORT)
@@ -78,6 +83,8 @@ def _single_edit(
     cfg: float,
     seed: int,
     megapixels: float,
+    engine: str,
+    use_torch_compile: bool,
 ) -> tuple[str | None, str]:
     try:
         result = run_edit(
@@ -89,6 +96,8 @@ def _single_edit(
             cfg=float(cfg),
             seed=int(seed),
             megapixels=float(megapixels),
+            engine=engine,
+            use_torch_compile=bool(use_torch_compile),
         )
         return str(result.image_path), result.status
     except Exception as exc:
@@ -116,6 +125,8 @@ def _edit_frames(
     cfg: float,
     seed: int,
     megapixels: float,
+    engine: str,
+    use_torch_compile: bool,
 ) -> str:
     if not frame_dir:
         return "Extract frames first."
@@ -130,6 +141,8 @@ def _edit_frames(
             cfg=float(cfg),
             seed=int(seed),
             megapixels=float(megapixels),
+            engine=engine,
+            use_torch_compile=bool(use_torch_compile),
         )
 
     try:
@@ -154,6 +167,8 @@ def _process_batch(
     cfg: float,
     seed: int,
     megapixels: float,
+    engine: str,
+    use_torch_compile: bool,
 ) -> str:
     def _runner(image_path: Path, prompt_text: str, negative_text: str, target_dir: Path) -> GenerationResult:
         return run_edit(
@@ -165,6 +180,8 @@ def _process_batch(
             cfg=float(cfg),
             seed=int(seed),
             megapixels=float(megapixels),
+            engine=engine,
+            use_torch_compile=bool(use_torch_compile),
         )
 
     try:
@@ -189,6 +206,8 @@ def _generate_t2i(
     steps: int,
     cfg: float,
     seed: int,
+    engine: str,
+    use_torch_compile: bool,
 ) -> tuple[str | None, str]:
     try:
         result = run_t2i(
@@ -200,6 +219,8 @@ def _generate_t2i(
             steps=int(steps),
             cfg=float(cfg),
             seed=int(seed),
+            engine=engine,
+            use_torch_compile=bool(use_torch_compile),
         )
         return str(result.image_path), result.status
     except Exception as exc:
@@ -228,12 +249,28 @@ def build_app() -> "gr.Blocks":
                     edit_cfg = gr.Number(label="Guidance", value=1.0)
                     edit_megapixels = gr.Number(label="Megapixels", value=1.0)
                     edit_seed = gr.Number(label="Seed", value=0, precision=0)
+                    edit_engine = gr.Dropdown(label="Engine", choices=ENGINE_CHOICES, value="default")
+                    edit_compile = gr.Checkbox(
+                        label="torch.compile (faster after warmup; slower first run, recompiles on resolution change)",
+                        value=False,
+                    )
                     edit_button = gr.Button("Generate")
                     edit_result = gr.Image(label="Result")
                     edit_status = gr.Textbox(label="Status")
             edit_button.click(
                 fn=_single_edit,
-                inputs=[edit_image, edit_prompt, edit_negative, edit_output, edit_steps, edit_cfg, edit_seed, edit_megapixels],
+                inputs=[
+                    edit_image,
+                    edit_prompt,
+                    edit_negative,
+                    edit_output,
+                    edit_steps,
+                    edit_cfg,
+                    edit_seed,
+                    edit_megapixels,
+                    edit_engine,
+                    edit_compile,
+                ],
                 outputs=[edit_result, edit_status],
             )
 
@@ -254,6 +291,11 @@ def build_app() -> "gr.Blocks":
                     video_cfg = gr.Number(label="Guidance", value=1.0)
                     video_megapixels = gr.Number(label="Megapixels", value=1.0)
                     video_seed = gr.Number(label="Seed", value=0, precision=0)
+                    video_engine = gr.Dropdown(label="Engine", choices=ENGINE_CHOICES, value="default")
+                    video_compile = gr.Checkbox(
+                        label="torch.compile (faster after warmup; slower first run, recompiles on resolution change)",
+                        value=False,
+                    )
                     edit_frames_button = gr.Button("Edit all frames")
             extract_button.click(
                 fn=_extract_video,
@@ -262,7 +304,18 @@ def build_app() -> "gr.Blocks":
             )
             edit_frames_button.click(
                 fn=_edit_frames,
-                inputs=[frame_state, video_prompt, video_negative, video_output, video_steps, video_cfg, video_seed, video_megapixels],
+                inputs=[
+                    frame_state,
+                    video_prompt,
+                    video_negative,
+                    video_output,
+                    video_steps,
+                    video_cfg,
+                    video_seed,
+                    video_megapixels,
+                    video_engine,
+                    video_compile,
+                ],
                 outputs=frame_status,
             )
 
@@ -278,11 +331,27 @@ def build_app() -> "gr.Blocks":
                     batch_cfg = gr.Number(label="Guidance", value=1.0)
                     batch_megapixels = gr.Number(label="Megapixels", value=1.0)
                     batch_seed = gr.Number(label="Seed", value=0, precision=0)
+                    batch_engine = gr.Dropdown(label="Engine", choices=ENGINE_CHOICES, value="default")
+                    batch_compile = gr.Checkbox(
+                        label="torch.compile (faster after warmup; slower first run, recompiles on resolution change)",
+                        value=False,
+                    )
                     batch_button = gr.Button("Process folder")
                     batch_status = gr.Textbox(label="Status")
             batch_button.click(
                 fn=_process_batch,
-                inputs=[batch_input, batch_prompt, batch_negative, batch_output, batch_steps, batch_cfg, batch_seed, batch_megapixels],
+                inputs=[
+                    batch_input,
+                    batch_prompt,
+                    batch_negative,
+                    batch_output,
+                    batch_steps,
+                    batch_cfg,
+                    batch_seed,
+                    batch_megapixels,
+                    batch_engine,
+                    batch_compile,
+                ],
                 outputs=batch_status,
             )
 
@@ -298,12 +367,28 @@ def build_app() -> "gr.Blocks":
                     t2i_steps = gr.Number(label="Steps", value=4, precision=0)
                     t2i_cfg = gr.Number(label="Guidance", value=1.0)
                     t2i_seed = gr.Number(label="Seed", value=0, precision=0)
+                    t2i_engine = gr.Dropdown(label="Engine", choices=ENGINE_CHOICES, value="default")
+                    t2i_compile = gr.Checkbox(
+                        label="torch.compile (faster after warmup; slower first run, recompiles on resolution change)",
+                        value=False,
+                    )
                     t2i_button = gr.Button("Generate")
                     t2i_result = gr.Image(label="Result")
                     t2i_status = gr.Textbox(label="Status")
             t2i_button.click(
                 fn=_generate_t2i,
-                inputs=[t2i_prompt, t2i_negative, t2i_output, t2i_width, t2i_height, t2i_steps, t2i_cfg, t2i_seed],
+                inputs=[
+                    t2i_prompt,
+                    t2i_negative,
+                    t2i_output,
+                    t2i_width,
+                    t2i_height,
+                    t2i_steps,
+                    t2i_cfg,
+                    t2i_seed,
+                    t2i_engine,
+                    t2i_compile,
+                ],
                 outputs=[t2i_result, t2i_status],
             )
 
