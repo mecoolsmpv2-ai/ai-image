@@ -16,6 +16,8 @@ from comfyui_app.batch import CANCEL_EVENT, clear_cancel, iter_process_folder, p
 from comfyui_app.comfy_client import ComfyClient
 from comfyui_app.config import COMFYUI_HOST, COMFYUI_PORT, DEFAULT_OUTPUT_DIR
 from comfyui_app.generation import GenerationResult, run_depth_edit, run_edit, run_t2i, run_upscale
+from comfyui_app.model_manager import delete_models as delete_installed_models
+from comfyui_app.model_manager import list_installed_models
 from comfyui_app.model_resolver import ModelResolverError, load_resolved_manifest
 from comfyui_app.ui_utils import pick_directory
 from comfyui_app.vram import detect_vram, select_tier
@@ -98,6 +100,36 @@ def _stop_current_job() -> str:
     except Exception:
         logger.debug("Interrupt request failed", exc_info=True)
     return "Stop requested."
+
+
+def _model_manager_payload() -> tuple[object, str, str]:
+    data = list_installed_models()
+    choices = [(entry["label"], entry["path"]) for entry in data["entries"]]
+    total_line = f"**Total installed model files:** {data['count']}  \n**Disk usage:** {data['total']}"
+    status = f"Found {data['count']} model files."
+    return gr.update(choices=choices, value=[]), total_line, status
+
+
+def _model_manager_refresh() -> tuple[object, str, str]:
+    try:
+        return _model_manager_payload()
+    except Exception as exc:
+        return gr.update(choices=[], value=[]), "Unable to read installed models.", _friendly_error(exc)
+
+
+def _model_manager_delete(selected_paths: list[str] | None) -> tuple[object, str, str]:
+    try:
+        if not selected_paths:
+            refreshed = _model_manager_payload()
+            return refreshed[0], refreshed[1], "No models selected."
+        data = delete_installed_models(selected_paths)
+        choices = [(entry["label"], entry["path"]) for entry in data["entries"]]
+        total_line = f"**Total installed model files:** {data['count']}  \n**Disk usage:** {data['total']}"
+        status = f"Deleted {data['freed']} and refreshed the list."
+        return gr.update(choices=choices, value=[]), total_line, status
+    except Exception as exc:
+        refreshed = _model_manager_payload()
+        return refreshed[0], refreshed[1], _friendly_error(exc)
 
 
 def _edit_handler(
@@ -577,6 +609,19 @@ def build_app() -> "gr.Blocks":
             )
             video_upscale_stop.click(fn=_stop_current_job, outputs=video_upscale_status, cancels=[video_upscale_evt])
 
+        with gr.Tab("Manage Models"):
+            with gr.Row():
+                with gr.Column():
+                    model_refresh = gr.Button("Refresh")
+                    model_delete = gr.Button("Delete selected")
+                    model_total = gr.Markdown("**Total installed model files:** 0  \n**Disk usage:** 0 B")
+                    model_status = gr.Textbox(label="Status")
+                with gr.Column():
+                    model_list = gr.CheckboxGroup(label="Installed models", choices=[], value=[])
+            model_refresh.click(fn=_model_manager_refresh, outputs=[model_list, model_total, model_status])
+            model_delete.click(fn=_model_manager_delete, inputs=[model_list], outputs=[model_list, model_total, model_status])
+
+        demo.load(fn=_model_manager_refresh, outputs=[model_list, model_total, model_status])
         demo.queue()
     return demo
 

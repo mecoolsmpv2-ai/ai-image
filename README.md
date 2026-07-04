@@ -64,6 +64,14 @@ The resolver writes into the standard ComfyUI folders:
 - `ComfyUI/models/upscale_models/`
 - `ComfyUI/models/loras/`
 
+## Manage Models
+
+Use the **Manage Models** tab to review installed model files, see their sizes, and delete ones you no longer need to free disk space.
+
+- It shows the file category, filename, and size.
+- Deleted files are removed from disk and from the resolved manifest.
+- If you need a deleted model again later, the app will re-download it on demand when you pick that engine or feature path again.
+
 ## Upscaling
 
 ### RTX Video Super Resolution
