@@ -17,7 +17,7 @@
   "3": {
     "class_type": "VAELoader",
     "inputs": {
-      "vae_name": "flux2-vae.safetensors"
+      "vae_name": "full_encoder_small_decoder.safetensors"
     }
   },
   "4": {

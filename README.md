@@ -1,12 +1,49 @@
 # gradio-ai-v2
 
-## ComfyUI local image app (FLUX.2 [klein] 4B, RTX 3070 optimized)
+## ComfyUI local image app
 
 This repo now includes an additive, ComfyUI-based local image app under
 `comfyui_app/` that replaces the Hugging Face **diffusers** WebUI for the
-FLUX.2 [klein] 4B workflow. ComfyUI is faster and much more VRAM-efficient for
-this model on 8 GB cards, so the full functionality (image editing,
-video-to-frames, batch folder processing, configurable output) was migrated on
+FLUX.2 [klein] 4B workflow. ComfyUI is faster and more VRAM-efficient on
+8 GB cards, and the new app keeps the existing image-edit, video-frame, batch,
+and text-to-image workflows.
+
+### Model layout
+
+- `models/diffusion_models/`
+- `models/text_encoders/`
+- `models/vae/`
+  - Default: `black-forest-labs/FLUX.2-small-decoder` →
+    `full_encoder_small_decoder.safetensors`
+  - Fallback: `Comfy-Org/flux2-klein-4B` → `flux2-vae.safetensors`
+
+The small decoder is the preferred VAE for this app. It is a distilled,
+drop-in decoder that is about 1.4× faster to decode and uses about 1.4× less
+VRAM than the standard `flux2-vae` decoder, with minimal quality difference.
+For image edit and batch workflows we still use the standard VAE encode path;
+the single-file `full_encoder_small_decoder.safetensors` is used because it
+contains the normal encoder plus the faster decoder.
+
+### RTX 3070 / 8 GB default plan
+
+- Diffusion: `flux-2-klein-4b-fp8.safetensors`
+- Text encoder: `qwen_3_4b_fp4_flux2.safetensors`
+- VAE: `full_encoder_small_decoder.safetensors`
+- Decode: `VAEDecodeTiled`
+
+### Repos checked
+
+- `black-forest-labs/FLUX.2-klein-4b-fp8`
+- `black-forest-labs/FLUX.2-small-decoder`
+- `Comfy-Org/flux2-klein-4B`
+- `unsloth/FLUX.2-klein-4B-GGUF`
+
+### Sources
+
+- https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8
+- https://huggingface.co/black-forest-labs/FLUX.2-small-decoder
+- https://huggingface.co/Comfy-Org/flux2-klein-4B
+- https://huggingface.co/unsloth/FLUX.2-klein-4B-GGUF
 top of ComfyUI's HTTP API behind a simple, non-technical Gradio front end — no
 node graph required.
 

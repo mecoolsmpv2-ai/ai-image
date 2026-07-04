@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from comfyui_app import model_resolver
-from comfyui_app.model_resolver import resolve_models
+from comfyui_app.model_resolver import ModelResolverError, resolve_models
 from comfyui_app.vram import select_tier
 from comfyui_app.workflow_builder import build_edit_prompt, build_t2i_prompt
 
@@ -137,13 +137,13 @@ def test_resolver_regex_match_picks_fp8(monkeypatch) -> None:
     assert Path(str(resolved["vae"]["local_filename"])).name == "flux2-vae.safetensors"
 
 
-def test_resolver_prefers_tiny_decoder_when_present(monkeypatch) -> None:
+def test_resolver_prefers_small_decoder_when_present(monkeypatch) -> None:
     trees = {
         "black-forest-labs/FLUX.2-klein-4b-fp8": _tree("flux-2-klein-4b-fp8.safetensors"),
+        "black-forest-labs/FLUX.2-small-decoder": _tree("full_encoder_small_decoder.safetensors"),
         "Comfy-Org/flux2-klein-4B": _tree(
             "split_files/text_encoders/qwen_3_4b_fp4_flux2.safetensors",
             "split_files/vae/flux2-vae.safetensors",
-            "split_files/vae/flux2-taef2.safetensors",
         ),
     }
 
@@ -153,4 +153,24 @@ def test_resolver_prefers_tiny_decoder_when_present(monkeypatch) -> None:
     monkeypatch.setattr(model_resolver, "_fetch_repo_tree", fake_fetch)
     resolved = resolve_models(8.0, token="token")
 
-    assert "taef2" in Path(str(resolved["vae"]["local_filename"])).name.lower()
+    assert Path(str(resolved["vae"]["local_filename"])).name == "full_encoder_small_decoder.safetensors"
+
+
+def test_resolver_falls_back_to_flux2_vae_when_small_decoder_missing(monkeypatch) -> None:
+    trees = {
+        "black-forest-labs/FLUX.2-klein-4b-fp8": _tree("flux-2-klein-4b-fp8.safetensors"),
+        "Comfy-Org/flux2-klein-4B": _tree(
+            "split_files/text_encoders/qwen_3_4b_fp4_flux2.safetensors",
+            "split_files/vae/flux2-vae.safetensors",
+        ),
+    }
+
+    def fake_fetch(repo: str, token: str | None):
+        if repo == "black-forest-labs/FLUX.2-small-decoder":
+            raise ModelResolverError("small decoder unavailable")
+        return trees.get(repo, [])
+
+    monkeypatch.setattr(model_resolver, "_fetch_repo_tree", fake_fetch)
+    resolved = resolve_models(8.0, token="token")
+
+    assert Path(str(resolved["vae"]["local_filename"])).name == "flux2-vae.safetensors"

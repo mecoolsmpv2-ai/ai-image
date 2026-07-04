@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -96,6 +96,15 @@ MODEL_REGISTRY: dict[str, dict[str, list[Candidate]]] = {
         ],
     },
     "vae": {
+        "flux2_small_decoder": [
+            Candidate(
+                repo="black-forest-labs/FLUX.2-small-decoder",
+                path_regex=r"(^|/)full_encoder_small_decoder\.safetensors$",
+                dest_subdir="vae",
+                min_vram=0.0,
+                kind="full_encoder_small_decoder.safetensors",
+            )
+        ],
         "flux2_vae": [
             Candidate(
                 repo="Comfy-Org/flux2-klein-4B",
@@ -108,38 +117,8 @@ MODEL_REGISTRY: dict[str, dict[str, list[Candidate]]] = {
     },
 }
 
-TINY_DECODER_PROBES: tuple[Candidate, ...] = (
-    Candidate(
-        repo="Comfy-Org/flux2-klein-4B",
-        path_regex=r"(taef2|taesd|tiny.*flux2|flux2.*tiny)",
-        dest_subdir="vae",
-        min_vram=0.0,
-        kind="tiny_decoder",
-    ),
-    Candidate(
-        repo="Comfy-Org/flux2-klein-4B-GGUF",
-        path_regex=r"(taef2|taesd|tiny.*flux2|flux2.*tiny)",
-        dest_subdir="vae",
-        min_vram=0.0,
-        kind="tiny_decoder",
-    ),
-    Candidate(
-        repo="black-forest-labs/FLUX.2-klein-4b-fp8",
-        path_regex=r"(taef2|taesd|tiny.*flux2|flux2.*tiny)",
-        dest_subdir="vae",
-        min_vram=0.0,
-        kind="tiny_decoder",
-    ),
-)
-
 RESOLVED_MANIFEST = REPO_ROOT / "comfyui_app" / "resolved_models.json"
 COMFYUI_MANIFEST = COMFYUI_DIR / "resolved_models.json"
-
-
-def _manifest_candidates() -> Iterable[Candidate]:
-    for component in ("diffusion", "text_encoder", "vae"):
-        for candidate_group in MODEL_REGISTRY[component].values():
-            yield from candidate_group
 
 
 def _fetch_repo_tree(repo: str, token: str | None) -> list[dict[str, object]]:
@@ -216,17 +195,6 @@ def _select_candidate_for_key(component: str, key: str, token: str | None) -> di
     raise ModelResolverError(f"Could not resolve a file for {component}:{key}.")
 
 
-def _select_tiny_decoder(token: str | None) -> dict[str, object] | None:
-    for candidate in TINY_DECODER_PROBES:
-        try:
-            entries = _fetch_repo_tree(candidate.repo, token)
-            entry = _match_file(entries, candidate)
-        except ModelResolverError:
-            continue
-        return _candidate_to_resolved(candidate, entry)
-    return None
-
-
 def resolve_models(vram_gb: float, token: str | None, prefer_gguf: bool = False) -> dict[str, dict[str, object]]:
     if not token:
         raise ModelResolverError(
@@ -242,12 +210,10 @@ def resolve_models(vram_gb: float, token: str | None, prefer_gguf: bool = False)
     resolved = {
         "diffusion": _select_candidate_for_key("diffusion", diffusion_key, token),
         "text_encoder": _select_candidate_for_key("text_encoder", text_encoder_key, token),
-        "vae": None,
     }
-    tiny_decoder = _select_tiny_decoder(token)
-    if tiny_decoder is not None:
-        resolved["vae"] = tiny_decoder
-    else:
+    try:
+        resolved["vae"] = _select_candidate_for_key("vae", "flux2_small_decoder", token)
+    except ModelResolverError:
         resolved["vae"] = _select_candidate_for_key("vae", "flux2_vae", token)
     return resolved
 
