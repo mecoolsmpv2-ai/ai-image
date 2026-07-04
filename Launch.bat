@@ -43,6 +43,12 @@ set "COMFYUI_PORT=8188"
 set "COMFYUI_UI_HOST=127.0.0.1"
 set "COMFYUI_UI_PORT=7861"
 set "PYTHONWARNINGS=ignore::DeprecationWarning"
+
+REM Kill any previous session still holding the ComfyUI / app ports so relaunch doesn't fail.
+echo Stopping any previous session...
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%COMFYUI_PORT% " ^| findstr LISTENING') do taskkill /F /PID %%P >nul 2>&1
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%COMFYUI_UI_PORT% " ^| findstr LISTENING') do taskkill /F /PID %%P >nul 2>&1
+
 set "EXTRA_FLAGS="
 for /f "usebackq delims=" %%A in (`python -c "from comfyui_app.vram import detect_vram, select_tier; gb, _, _ = detect_vram(); print(' '.join(select_tier(gb).extra_launch_flags))"`) do set "EXTRA_FLAGS=%%A"
 set "SAGE_FLAG="
