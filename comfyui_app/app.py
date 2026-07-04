@@ -291,7 +291,7 @@ def build_app() -> "gr.Blocks":
             frame_state = gr.State("")
             with gr.Row():
                 with gr.Column():
-                    video_input = gr.Video(label="Video", type="filepath")
+                    video_input = gr.Video(label="Video")
                     every_n = gr.Number(label="Every Nth frame", value=1, precision=0)
                     max_frames = gr.Number(label="Max frames", value=0, precision=0)
                     video_output = gr.Textbox(label="Output folder", value=str(DEFAULT_OUTPUT_DIR))
