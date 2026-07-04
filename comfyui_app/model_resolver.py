@@ -114,6 +114,15 @@ MODEL_REGISTRY: dict[str, dict[str, list[Candidate]]] = {
                 kind="flux-2-klein-base-4b-fp8.safetensors",
             )
         ],
+        "base_int8": [
+            Candidate(
+                repo="vistralis/FLUX.2-klein-base-4b-int8",
+                path_regex=r"(^|/)flux-2-klein-base-4b-int8\.safetensors$",
+                dest_subdir="diffusion_models",
+                min_vram=0.0,
+                kind="flux-2-klein-base-4b-int8.safetensors",
+            )
+        ],
         "refcontrol_depth_lora": [
             Candidate(
                 repo="thedeoxen/refcontrol-FLUX.2-klein-4B-reference-depth-lora",
@@ -273,13 +282,14 @@ def resolve_models(
     return resolved
 
 
-def resolve_depth_control_models(token: str | None) -> dict[str, dict[str, object]]:
+def resolve_depth_control_models(token: str | None, use_int8_base: bool = True) -> dict[str, dict[str, object]]:
     if not token:
         raise ModelResolverError(
             "A Hugging Face token is required to download the depth-control models. Run setup and paste your token first."
         )
+    base_key = "base_int8" if use_int8_base else "base_fp8"
     return {
-        "depth_control_base": _select_candidate_for_key("depth_control", "base_fp8", token),
+        f"depth_control_{base_key}": _select_candidate_for_key("depth_control", base_key, token),
         "depth_control_lora": _select_candidate_for_key("depth_control", "refcontrol_depth_lora", token),
     }
 

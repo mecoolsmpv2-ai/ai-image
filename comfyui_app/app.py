@@ -3,9 +3,16 @@
 import logging
 import os
 import shutil
+import warnings
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*HTTP_422_UNPROCESSABLE_ENTITY.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*local_dir_use_symlinks.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*resume_download.*")
+warnings.filterwarnings("ignore", category=FutureWarning, message=r".*local_dir_use_symlinks.*")
+warnings.filterwarnings("ignore", category=FutureWarning, message=r".*resume_download.*")
 
 try:
     import gradio as gr
@@ -146,7 +153,8 @@ def _edit_handler(
     use_torch_compile: bool,
     mrflow: bool,
     depth_lock: bool,
-) -> tuple[str | None, str]:
+    depth_fp8_base: bool,
+) -> tuple[str | None, str | None, str]:
     try:
         input_path = _component_path(input_image)
         reference_path = _optional_component_path(reference_image)
@@ -158,7 +166,10 @@ def _edit_handler(
                 negative,
                 output_dir,
                 seed=int(seed),
+                use_fp8_base=bool(depth_fp8_base),
+                megapixels=float(megapixels),
             )
+            return str(result.image_path), str(result.preview_path) if result.preview_path is not None else None, result.status
         else:
             result = run_edit(
                 input_path,
@@ -173,9 +184,9 @@ def _edit_handler(
                 use_torch_compile=bool(use_torch_compile),
                 mrflow=bool(mrflow),
             )
-        return str(result.image_path), result.status
+            return str(result.image_path), None, result.status
     except Exception as exc:
-        return None, _friendly_error(exc)
+        return None, None, _friendly_error(exc)
 
 
 def _t2i_handler(
@@ -270,7 +281,7 @@ def _batch_folder_stream(
             mrflow=bool(mrflow),
         )
 
-    return _yield_folder_updates(iter_process_folder(input_dir, output_dir, prompt, negative, gen_fn))
+    yield from _yield_folder_updates(iter_process_folder(input_dir, output_dir, prompt, negative, gen_fn))
 
 
 def _upscale_folder_stream(
@@ -283,7 +294,7 @@ def _upscale_folder_stream(
     def gen_fn(image_path: Path, prompt_text: str, negative_text: str, run_dir: Path) -> GenerationResult:
         return run_upscale(image_path, run_dir, upscaler=upscaler, scale=float(scale), quality=quality)
 
-    return _yield_folder_updates(iter_process_folder(input_dir, output_dir, "", "", gen_fn))
+    yield from _yield_folder_updates(iter_process_folder(input_dir, output_dir, "", "", gen_fn))
 
 
 def _extract_frames_handler(video_file: object, output_dir: str, every_n: int, max_frames: int) -> tuple[str, str]:
@@ -414,6 +425,12 @@ def build_app() -> "gr.Blocks":
                         "With Pose/Shape lock, the output is locked to the input image's pose/shape (depth is auto-extracted from it). Leave Identity empty to keep the input's own identity, or add an identity image to borrow a different subject's identity while keeping the input's pose/shape.",
                         visible=False,
                     )
+                    edit_depth_preview = gr.Image(label="Depth map preview", visible=False)
+                    edit_depth_fp8_base = gr.Checkbox(
+                        label="Use fp8 base instead (fallback if INT8 quality looks off)",
+                        value=False,
+                        visible=False,
+                    )
                     edit_prompt = gr.Textbox(label="Prompt", lines=4)
                     edit_negative = gr.Textbox(label="Negative prompt", lines=3)
                 with gr.Column():
@@ -441,13 +458,13 @@ def build_app() -> "gr.Blocks":
                     edit_status = gr.Textbox(label="Status")
             edit_run = edit_button.click(
                 fn=_edit_handler,
-                inputs=[edit_image, edit_reference, edit_prompt, edit_negative, edit_output, edit_steps, edit_cfg, edit_megapixels, edit_seed, edit_engine, edit_compile, edit_mrflow, edit_depth_lock],
-                outputs=[edit_result, edit_status],
+                inputs=[edit_image, edit_reference, edit_prompt, edit_negative, edit_output, edit_steps, edit_cfg, edit_megapixels, edit_seed, edit_engine, edit_compile, edit_mrflow, edit_depth_lock, edit_depth_fp8_base],
+                outputs=[edit_result, edit_depth_preview, edit_status],
             )
             edit_depth_lock.change(
-                fn=lambda enabled: (gr.update(visible=bool(enabled)), gr.update(visible=bool(enabled))),
+                fn=lambda enabled: (gr.update(visible=bool(enabled)), gr.update(visible=bool(enabled)), gr.update(visible=bool(enabled)), gr.update(visible=bool(enabled))),
                 inputs=[edit_depth_lock],
-                outputs=[edit_reference, edit_depth_note],
+                outputs=[edit_reference, edit_depth_note, edit_depth_preview, edit_depth_fp8_base],
             )
             edit_stop.click(fn=_stop_current_job, outputs=edit_status, cancels=[edit_run])
 

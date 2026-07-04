@@ -19,6 +19,14 @@ def test_build_rtx_upscale_prompt_serializes_flat_inputs() -> None:
     }
 
 
+def test_build_rtx_upscale_prompt_includes_required_scale_for_target_dimensions() -> None:
+    prompt = build_rtx_upscale_prompt(image="input.png", resize_type="target dimensions", width=1920, height=1080)
+
+    assert prompt["2"]["inputs"]["scale"] == 2.0
+    assert prompt["2"]["inputs"]["width"] == 1920
+    assert prompt["2"]["inputs"]["height"] == 1080
+
+
 def test_build_esrgan_upscale_prompt_uses_core_upscale_nodes() -> None:
     prompt = build_esrgan_upscale_prompt(image="input.png", target_width=2048, target_height=2048, resize_type="target dimensions")
 
@@ -131,21 +139,85 @@ def test_image_edit_handler_routes_to_depth_path_only_when_enabled(monkeypatch) 
 
     def fake_run_depth_edit(*args, **kwargs):
         calls.append(("depth", args, kwargs))
-        return GenerationResult(image_path=Path("depth.png"), status="depth")
+        return GenerationResult(image_path=Path("depth.png"), status="depth", preview_path=Path("depth-map.png"))
 
     monkeypatch.setattr(app, "run_edit", fake_run_edit)
     monkeypatch.setattr(app, "run_depth_edit", fake_run_depth_edit)
 
-    result = app._edit_handler("input.png", None, "prompt", "negative", "out", 4, 1.0, 1.0, 0, "default", False, False, False)
-    assert result == ("edit.png", "edit")
+    result = app._edit_handler("input.png", None, "prompt", "negative", "out", 4, 1.0, 1.0, 0, "default", False, False, False, False)
+    assert result == ("edit.png", None, "edit")
     assert calls[0][0] == "edit"
 
     calls.clear()
-    result = app._edit_handler("input.png", "reference.png", "prompt", "negative", "out", 4, 1.0, 1.0, 0, "default", False, False, True)
-    assert result == ("depth.png", "depth")
+    result = app._edit_handler("input.png", "reference.png", "prompt", "negative", "out", 4, 1.0, 1.0, 0, "default", False, False, True, False)
+    assert result == ("depth.png", "depth-map.png", "depth")
     assert calls[0][0] == "depth"
 
 
 def test_app_default_engine_is_int8() -> None:
     assert app.DEFAULT_ENGINE_VALUE == "int8"
     assert app.ENGINE_CHOICES[0] == ("INT8 (fastest on Ampere - default)", "int8")
+
+
+def test_app_exposes_depth_fp8_fallback_checkbox() -> None:
+    demo = app.build_app()
+    labels = [
+        component.get("props", {}).get("label")
+        for component in demo.config["components"]
+        if isinstance(component, dict)
+    ]
+    assert "Use fp8 base instead (fallback if INT8 quality looks off)" in labels
+
+
+def test_run_depth_edit_uses_requested_base_variant(monkeypatch, tmp_path: Path) -> None:
+    from comfyui_app import generation
+
+    recorded: dict[str, object] = {}
+
+    class FakeImage:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def save(self, path: Path) -> None:
+            Path(path).write_text(self.name, encoding="utf-8")
+
+    class FakeClient:
+        client_id = "client"
+
+        def upload_image(self, path: Path) -> str:
+            return f"uploaded:{Path(path).name}"
+
+        def wait_until_up(self, timeout: float = 0.0) -> None:
+            return None
+
+        def queue_prompt(self, prompt_dict, client_id=None) -> str:
+            recorded["diffusion_model"] = prompt_dict["1"]["inputs"]["unet_name"]
+            return "prompt-id"
+
+        def wait_for_completion(self, prompt_id, client_id=None, timeout: float = 0.0) -> None:
+            return None
+
+        def get_images(self, prompt_id: str):
+            return [FakeImage("depth"), FakeImage("final")]
+
+    def fake_depth_assets(use_fp8_base: bool = False) -> tuple[str, str]:
+        recorded["use_fp8_base"] = use_fp8_base
+        return ("base.safetensors", "lora.safetensors")
+
+    def fake_resolved_filename_map(vram_gb: float, prefer_gguf: bool, engine: str) -> dict[str, str]:
+        return {"diffusion": "diff.safetensors", "text_encoder": "text.safetensors", "vae": "vae.safetensors"}
+
+    monkeypatch.setattr(generation, "_depth_control_assets", fake_depth_assets)
+    monkeypatch.setattr(generation, "_resolved_filename_map", fake_resolved_filename_map)
+    monkeypatch.setattr(generation, "detect_vram", lambda: (8.0, "RTX", True))
+
+    result = generation.run_depth_edit(tmp_path / "input.png", None, "prompt", "negative", tmp_path, use_fp8_base=False, client=FakeClient())
+    assert recorded["use_fp8_base"] is False
+    assert recorded["diffusion_model"] == "base.safetensors"
+    assert result.status.startswith("Saved image to ")
+    assert result.preview_path is not None
+    assert result.preview_path.read_text(encoding="utf-8") == "depth"
+    assert result.image_path.read_text(encoding="utf-8") == "final"
+
+    generation.run_depth_edit(tmp_path / "input.png", None, "prompt", "negative", tmp_path, use_fp8_base=True, client=FakeClient())
+    assert recorded["use_fp8_base"] is True

@@ -14,7 +14,13 @@ except Exception:  # pragma: no cover - optional dependency
 
 from comfyui_app.comfy_client import ComfyClient
 from comfyui_app.config import COMFYUI_HOST, COMFYUI_PORT, get_hf_token
-from comfyui_app.model_resolver import ModelResolverError, download_models, load_resolved_manifest, resolve_models
+from comfyui_app.model_resolver import (
+    ModelResolverError,
+    download_models,
+    load_resolved_manifest,
+    resolve_depth_control_models,
+    resolve_models,
+)
 from comfyui_app.vram import detect_vram, select_tier
 from comfyui_app.workflow_builder import (
     DEFAULT_UPSCALE_MODEL,
@@ -35,6 +41,7 @@ class GenerationResult:
     image_path: Path
     status: str
     prompt_id: str | None = None
+    preview_path: Path | None = None
 
 
 class _ImageLike(Protocol):
@@ -98,23 +105,40 @@ def _image_dimensions(image_path: Path) -> tuple[int, int]:
     return width, height
 
 
-def _depth_control_assets() -> tuple[str, str]:
+def _depth_control_assets(use_fp8_base: bool = False) -> tuple[str, str]:
     manifest = load_resolved_manifest()
     if not isinstance(manifest, dict):
-        raise ModelResolverError(
-            "Pose/Shape lock (depth) is not installed. Re-run Install.bat with --with-depth-control."
-        )
+        manifest = {}
     models = manifest.get("models")
     if not isinstance(models, dict):
-        raise ModelResolverError(
-            "Pose/Shape lock (depth) is not installed. Re-run Install.bat with --with-depth-control."
-        )
-    base = models.get("depth_control_base")
+        models = {}
+    base_key = "depth_control_base_fp8" if use_fp8_base else "depth_control_base_int8"
+    base = models.get(base_key)
     lora = models.get("depth_control_lora")
     if not isinstance(base, dict) or not isinstance(lora, dict):
-        raise ModelResolverError(
-            "Pose/Shape lock (depth) is not installed. Re-run Install.bat with --with-depth-control."
-        )
+        token = get_hf_token()
+        if not token:
+            raise ModelResolverError(
+                "Pose/Shape lock (depth) is not installed. Re-run Install.bat with --with-depth-control."
+            )
+        resolved = resolve_depth_control_models(token, use_int8_base=not use_fp8_base)
+        download_models(resolved, token)
+        manifest = load_resolved_manifest()
+        if not isinstance(manifest, dict):
+            raise ModelResolverError(
+                "Pose/Shape lock (depth) is not installed. Re-run Install.bat with --with-depth-control."
+            )
+        models = manifest.get("models")
+        if not isinstance(models, dict):
+            raise ModelResolverError(
+                "Pose/Shape lock (depth) is not installed. Re-run Install.bat with --with-depth-control."
+            )
+        base = models.get(base_key)
+        lora = models.get("depth_control_lora")
+        if not isinstance(base, dict) or not isinstance(lora, dict):
+            raise ModelResolverError(
+                "Pose/Shape lock (depth) is not installed. Re-run Install.bat with --with-depth-control."
+            )
     base_name = str(base.get("local_filename") or "")
     lora_name = str(lora.get("local_filename") or "")
     if not base_name or not lora_name:
@@ -444,6 +468,8 @@ def run_depth_edit(
     cfg: float = 5.0,
     seed: int = 0,
     lora_strength: float = 1.0,
+    use_fp8_base: bool = False,
+    megapixels: float = 1.0,
     timeout: float = 600.0,
     client: ComfyClient | None = None,
 ) -> GenerationResult:
@@ -453,7 +479,7 @@ def run_depth_edit(
     target_dir = Path(output_dir)
     vram_gb, _, _ = detect_vram()
     filenames = _resolved_filename_map(vram_gb, False, "default")
-    depth_base_model, depth_lora_model = _depth_control_assets()
+    depth_base_model, depth_lora_model = _depth_control_assets(use_fp8_base=use_fp8_base)
     depth_source_name = client.upload_image(depth_source_path)
     reference_name = client.upload_image(reference_path) if reference_path != depth_source_path else depth_source_name
     prompt_dict = build_depth_refcontrol_edit_prompt(
@@ -469,6 +495,25 @@ def run_depth_edit(
         steps=steps,
         cfg=cfg,
         lora_strength=lora_strength,
+        megapixels=megapixels,
     )
     output_name = _output_name(depth_source_path, "depth_edit", seed)
-    return _run_prompt(client, prompt_dict, target_dir, output_name, timeout)
+    client.wait_until_up(timeout=timeout)
+    prompt_id = client.queue_prompt(prompt_dict, client.client_id)
+    client.wait_for_completion(prompt_id, client.client_id, timeout=timeout)
+    images = client.get_images(prompt_id)
+    if len(images) < 2:
+        raise ModelResolverError("ComfyUI finished, but the depth preview or final image was not returned.")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    depth_preview_path = target_dir / output_name.replace(".png", "_depth.png")
+    preview_image = images[0]
+    final_image = images[-1]
+    preview_image.save(depth_preview_path)
+    final_path = target_dir / output_name
+    final_image.save(final_path)
+    return GenerationResult(
+        image_path=final_path,
+        status=f"Saved image to {final_path}.",
+        prompt_id=prompt_id,
+        preview_path=depth_preview_path,
+    )

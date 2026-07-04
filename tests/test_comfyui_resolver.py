@@ -147,7 +147,7 @@ def test_build_t2i_prompt_omits_image_encoding_nodes() -> None:
 
 def test_build_depth_refcontrol_edit_prompt_uses_depth_assets() -> None:
     prompt = build_depth_refcontrol_edit_prompt(
-        diffusion_model="flux-2-klein-base-4b-fp8.safetensors",
+        diffusion_model="flux-2-klein-base-4b-int8.safetensors",
         text_encoder_model="qwen_3_4b_fp4_flux2.safetensors",
         vae_model="flux2-vae.safetensors",
         lora_model_name="flux2_klein_4b_refcontrol_depth.safetensors",
@@ -160,14 +160,40 @@ def test_build_depth_refcontrol_edit_prompt_uses_depth_assets() -> None:
 
     class_types = {node["class_type"] for node in prompt.values()}
     assert {"UNETLoader", "LoraLoaderModelOnly", "DepthAnythingV2Preprocessor", "Flux2Scheduler", "CFGGuider", "SamplerCustomAdvanced", "VAEDecode", "SaveImage"} <= class_types
-    assert prompt["1"]["inputs"]["unet_name"] == "flux-2-klein-base-4b-fp8.safetensors"
+    assert prompt["1"]["inputs"]["unet_name"] == "flux-2-klein-base-4b-int8.safetensors"
     assert prompt["4"]["inputs"]["lora_name"] == "flux2_klein_4b_refcontrol_depth.safetensors"
     assert prompt["5"]["inputs"]["text"].startswith("refcontrol")
     assert prompt["13"]["class_type"] == "DepthAnythingV2Preprocessor"
     assert prompt["13"]["inputs"]["resolution"] == 512
-    assert prompt["18"]["inputs"]["steps"] == 20
-    assert prompt["21"]["inputs"]["cfg"] == 5.0
+    assert prompt["14"]["class_type"] == "SaveImage"
+    assert prompt["16"]["class_type"] == "GetImageSize"
+    assert prompt["20"]["class_type"] == "EmptyFlux2LatentImage"
+    assert prompt["21"]["inputs"]["width"] == ["16", 0]
+    assert prompt["21"]["inputs"]["height"] == ["16", 1]
+    assert prompt["21"]["inputs"]["steps"] == 20
+    assert prompt["24"]["inputs"]["cfg"] == 5.0
     assert "SamplerCustomAdvanced" in class_types
+
+
+def test_resolve_depth_control_models_supports_int8_base(monkeypatch) -> None:
+    trees = {
+        "black-forest-labs/FLUX.2-klein-base-4b-fp8": _tree("flux-2-klein-base-4b-fp8.safetensors"),
+        "vistralis/FLUX.2-klein-base-4b-int8": _tree("flux-2-klein-base-4b-int8.safetensors"),
+        "thedeoxen/refcontrol-FLUX.2-klein-4B-reference-depth-lora": _tree("flux2_klein_4b_refcontrol_depth.safetensors"),
+    }
+
+    def fake_fetch(repo: str, token: str | None):
+        return trees.get(repo, [])
+
+    monkeypatch.setattr(model_resolver, "_fetch_repo_tree", fake_fetch)
+
+    int8 = model_resolver.resolve_depth_control_models("token")
+    fp8 = model_resolver.resolve_depth_control_models("token", use_int8_base=False)
+
+    assert Path(str(int8["depth_control_base_int8"]["local_filename"])).name == "flux-2-klein-base-4b-int8.safetensors"
+    assert Path(str(fp8["depth_control_base_fp8"]["local_filename"])).name == "flux-2-klein-base-4b-fp8.safetensors"
+    assert Path(str(fp8["depth_control_lora"]["local_filename"])).name == "flux2_klein_4b_refcontrol_depth.safetensors"
+    assert Path(str(int8["depth_control_lora"]["local_filename"])).name == "flux2_klein_4b_refcontrol_depth.safetensors"
 
 
 def test_build_t2i_prompt_sets_new_decode_inputs_when_tiled() -> None:

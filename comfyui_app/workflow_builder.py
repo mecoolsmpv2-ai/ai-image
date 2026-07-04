@@ -400,6 +400,7 @@ def build_depth_refcontrol_edit_prompt(
     steps: int = 20,
     cfg: float = 5.0,
     lora_strength: float = 1.0,
+    megapixels: float = 1.0,
 ) -> dict[str, Any]:
     positive_prompt = _ensure_refcontrol_prompt(prompt)
     nodes: dict[str, Any] = {
@@ -414,7 +415,7 @@ def build_depth_refcontrol_edit_prompt(
             "ImageScaleToTotalPixels",
             image=_link("7"),
             upscale_method="nearest-exact",
-            megapixels=1.0,
+            megapixels=megapixels,
             resolution_steps=1,
         ),
         "9": _node("VAEEncode", pixels=_link("8"), vae=_link("3")),
@@ -422,30 +423,33 @@ def build_depth_refcontrol_edit_prompt(
         "11": _node(REFERENCE_LATENT_CLASS, conditioning=_link("6"), latent=_link("9")),
         "12": _node("LoadImage", image=structure_image_name),
         "13": _node(DEPTH_ANYTHING_V2_PREPROCESSOR_CLASS, image=_link("12"), ckpt_name="depth_anything_v2_vitl.pth", resolution=512),
-        "14": _node(
+        "14": _node("SaveImage", images=_link("13"), filename_prefix="Flux2-Klein-RefControl-DepthMap"),
+        "15": _node(
             "ImageScaleToTotalPixels",
             image=_link("13"),
             upscale_method="nearest-exact",
-            megapixels=1.0,
+            megapixels=megapixels,
             resolution_steps=1,
         ),
-        "15": _node("VAEEncode", pixels=_link("14"), vae=_link("3")),
-        "16": _node(REFERENCE_LATENT_CLASS, conditioning=_link("10"), latent=_link("15")),
-        "17": _node(REFERENCE_LATENT_CLASS, conditioning=_link("11"), latent=_link("15")),
-        "18": _node("Flux2Scheduler", steps=steps, width=1024, height=1024),
-        "19": _node("KSamplerSelect", sampler_name="euler"),
-        "20": _node("RandomNoise", noise_seed=seed),
-        "21": _node("CFGGuider", model=_link("4"), positive=_link("16"), negative=_link("17"), cfg=cfg),
-        "22": _node(
+        "16": _node("GetImageSize", image=_link("15")),
+        "17": _node("VAEEncode", pixels=_link("15"), vae=_link("3")),
+        "18": _node(REFERENCE_LATENT_CLASS, conditioning=_link("10"), latent=_link("17")),
+        "19": _node(REFERENCE_LATENT_CLASS, conditioning=_link("11"), latent=_link("17")),
+        "20": _node("EmptyFlux2LatentImage", width=_link("16", 0), height=_link("16", 1), batch_size=1),
+        "21": _node("Flux2Scheduler", steps=steps, width=_link("16", 0), height=_link("16", 1)),
+        "22": _node("KSamplerSelect", sampler_name="euler"),
+        "23": _node("RandomNoise", noise_seed=seed),
+        "24": _node("CFGGuider", model=_link("4"), positive=_link("18"), negative=_link("19"), cfg=cfg),
+        "25": _node(
             "SamplerCustomAdvanced",
-            noise=_link("20"),
-            guider=_link("21"),
-            sampler=_link("19"),
-            sigmas=_link("18"),
-            latent_image=_link("15"),
+            noise=_link("23"),
+            guider=_link("24"),
+            sampler=_link("22"),
+            sigmas=_link("21"),
+            latent_image=_link("20"),
         ),
-        "23": _node("VAEDecode", samples=_link("22"), vae=_link("3")),
-        "24": _node("SaveImage", images=_link("23"), filename_prefix="Flux2-Klein-RefControl-Depth"),
+        "26": _node("VAEDecode", samples=_link("25"), vae=_link("3")),
+        "27": _node("SaveImage", images=_link("26"), filename_prefix="Flux2-Klein-RefControl-Depth"),
     }
     return nodes
 
@@ -460,14 +464,12 @@ def build_rtx_upscale_prompt(
     quality: str = "ULTRA",
     filename_prefix: str = "Upscaled",
 ) -> dict[str, Any]:
-    inputs: dict[str, Any] = {"images": _link("1"), "resize_type": resize_type, "quality": quality}
+    inputs: dict[str, Any] = {"images": _link("1"), "resize_type": resize_type, "quality": quality, "scale": scale}
     if resize_type == "target dimensions":
         if width is None or height is None:
             raise ValueError("width and height are required when resize_type is 'target dimensions'.")
         inputs["width"] = width
         inputs["height"] = height
-    else:
-        inputs["scale"] = scale
     return {
         "1": _node("LoadImage", image=image),
         "2": _node(RTX_VIDEO_SUPER_RESOLUTION_CLASS, **inputs),
